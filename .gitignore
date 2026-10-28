@@ -1,0 +1,11 @@
+.env
+node_modules/
+.vscode-server/
+# Log files
+*.log
+soundboard.log
+# Configuration files
+config/categories.json
+# OS Temp-files
+.DS_Store
+Thumbs.db
