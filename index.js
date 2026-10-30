@@ -7,6 +7,7 @@ const {
     Routes,
     SlashCommandBuilder
 } = require('discord.js');
+const { restorePanelReferences } = require('./src/ui/uiBuilders');
 const { handleInteraction } = require('./src/handlers/interactionHandler');
 const { handleVoiceStateChange } = require('./src/audio/audioManager');
 const client = new Client({
@@ -27,17 +28,17 @@ const commands = [
         .setDescription('Stopuje wszystkie obecnie odtwarzane dźwięki'),
     new SlashCommandBuilder()
         .setName('disconnect')
-        .setDescription('Automatyczne rozłączanie bota z kanału głosowego')
+        .setDescription('Automatyczne rozłączanie bota z kanału głosowego / Status Autodisconnect')
         .addIntegerOption(opt =>
             opt.setName('czas')
-                .setDescription('Czas nieaktywności w min. (0 = wyłączone)')
-                .setRequired(true)),
+                .setDescription('Czas nieaktywności w min. (0 = wyłączone) / Zostaw puste, aby zobaczyć status')
+                .setRequired(false)),
     new SlashCommandBuilder()
         .setName('sound')
         .setDescription('Zarządzanie poszczególnymi dźwiękami')
         .addSubcommand(sub =>
             sub.setName('add')
-                .setDescription('Dodaje nowy plik dźwiękowy do wybranej kategorii')
+                .setDescription('Dodaje nowy dźwięk z pliku lub linku YouTube')
                 .addStringOption(opt =>
                     opt.setName('kategoria')
                         .setDescription('Kategoria docelowa')
@@ -45,11 +46,23 @@ const commands = [
                         .setRequired(true))
                 .addAttachmentOption(opt =>
                     opt.setName('plik')
-                        .setDescription('Plik w formacie .mp3 lub .wav')
-                        .setRequired(true))
+                        .setDescription('Plik audio (.mp3 lub .wav)')
+                        .setRequired(false))
+                .addStringOption(opt =>
+                    opt.setName('link_yt')
+                        .setDescription('Link do filmu YT')
+                        .setRequired(false))
                 .addStringOption(opt =>
                     opt.setName('nazwa')
-                        .setDescription('Nazwa efektu')
+                        .setDescription('Wyświetlana nazwa')
+                        .setRequired(false))
+                .addStringOption(opt =>
+                    opt.setName('start')
+                        .setDescription('Start dźwięku w [s]')
+                        .setRequired(false))
+                .addStringOption(opt =>
+                    opt.setName('end')
+                        .setDescription('Koniec dźwięku w [s]')
                         .setRequired(false))
                 .addStringOption(opt =>
                     opt.setName('emoji')
@@ -101,7 +114,20 @@ const commands = [
                     opt.setName('dzwiek')
                         .setDescription('Nazwa dźwięku')
                         .setAutocomplete(true)
-                        .setRequired(true))),
+                        .setRequired(true)))
+        .addSubcommand(sub =>
+            sub.setName('normalize')
+                .setDescription('Normalizuje poziom głośności (-16 LUFS) pojedyńczego dźwięku')
+                .addStringOption(opt =>
+                    opt.setName('kategoria')
+                        .setDescription('Kategoria (pozostaw puste, aby znormalizować WSZYSTKIE dźwięki)')
+                        .setAutocomplete(true)
+                        .setRequired(false))
+                .addStringOption(opt =>
+                    opt.setName('dzwiek')
+                        .setDescription('Nazwa dźwięku (pozostaw puste, aby znormalizować CAŁĄ kategorię')
+                        .setAutocomplete(true)
+                        .setRequired(false))),
     new SlashCommandBuilder()
         .setName('category')
         .setDescription('Zarządzanie kategoriami soundboardu')
@@ -169,6 +195,7 @@ const commands = [
 
 client.once('clientReady', async () => {
     console.log(`Bot zalogowany jako ${client.user.tag}`);
+    await restorePanelReferences(client);
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(

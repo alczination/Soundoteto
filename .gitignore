@@ -1,11 +1,14 @@
 .env
 node_modules/
 .vscode-server/
+sounds/
+normalized/
 # Log files
 *.log
 soundboard.log
 # Configuration files
 config/categories.json
+config/settings.json
 # OS Temp-files
 .DS_Store
 Thumbs.db

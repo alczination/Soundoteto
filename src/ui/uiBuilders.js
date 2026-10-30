@@ -6,9 +6,10 @@ const {
     ButtonBuilder,
     ButtonStyle,
     EmbedBuilder,
-    PermissionsBitField
+    PermissionsBitField,
+    ActionRow
 } = require('discord.js');
-const { SOUNDS_DIR, activeTracks } = require('../audio/audioManager');
+const { SOUNDS_DIR, getActiveTracks } = require('../audio/audioManager');
 const CONFIG_PATH = path.join(__dirname, '../../config/categories.json');
 
 async function syncLocalIconsToGuild(guild) {
@@ -87,6 +88,7 @@ async function syncLocalIconsToGuild(guild) {
 }
 
 function loadConfig() {
+
     if (fs.existsSync(CONFIG_PATH)) {
         try {
             const data = fs.readFileSync(CONFIG_PATH, 'utf-8');
@@ -95,6 +97,7 @@ function loadConfig() {
                 names: parsed.names || {},
                 soundNames: parsed.soundNames || {},
                 colors: parsed.colors || {},
+                normalizedFiles: new Set(parsed.normalizedFiles || []),
                 categoryEmojis: parsed.categoryEmojis || {},
                 buttonEmojis: parsed.buttonEmojis || {},
                 hidden: new Set(parsed.hidden || [])
@@ -103,13 +106,14 @@ function loadConfig() {
             console.error('Błąd podczas odczytu config/categories.json:', err);
         }
     }
-    return { names: {}, soundNames: {}, colors: {}, categoryEmojis: {}, buttonEmojis: {}, hidden: new Set() };
+    return { names: {}, soundNames: {}, colors: {}, normalizedFiles: new Set(), categoryEmojis: {}, buttonEmojis: {}, hidden: new Set() };
 }
 
 const config = loadConfig();
 const categoryNames = config.names;
 const soundDisplayNames = config.soundNames;
 const categoryColors = config.colors;
+const normalizedFiles = config.normalizedFiles;
 const categoryEmojis = config.categoryEmojis;
 const buttonEmojis = config.buttonEmojis;
 const hiddenCategories = config.hidden;
@@ -119,10 +123,15 @@ function saveConfig() {
         const payload = {
             names: categoryNames,
             soundNames: soundDisplayNames,
+            normalizedFiles: Array.from(normalizedFiles),
             colors: categoryColors,
             categoryEmojis: categoryEmojis,
             buttonEmojis: buttonEmojis,
-            hidden: Array.from(hiddenCategories)
+            hidden: Array.from(hiddenCategories),
+            mainPanelRef: mainPanelMessageRef ? {
+                channelId: mainPanelMessageRef.channel.id,
+                messageId: mainPanelMessageRef.id
+            } : null
         };
         const configDir = path.dirname(CONFIG_PATH);
         if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
@@ -136,12 +145,14 @@ const categoryMessageRefs = new Map();
 let mainPanelMessageRef = null;
 
 function buildMainDashboard(member = null) {
-    const activeCount = activeTracks?.size || 0;
+    const guildId = member?.guild?.id || null;
+    const tracksMap = getActiveTracks(guildId);
+    const activeCount = tracksMap?.size || 0;
     const isOwner = member && member.guild ? member.guild.ownerId === member.id : false;
     const hasAdminPerm = member && member.permissions && typeof member.permissions.has === 'function'
         ? member.permissions.has(PermissionsBitField.Flags.Administrator)
         : false;
-    const isAdmin = isOwner || hasAdminPerm;
+    const isAdmin = member === null ? true : (isOwner || hasAdminPerm);
     const embed = new EmbedBuilder()
         .setTitle('Główny panel')
         .setColor(activeCount > 0 ? 0x57F287 : 0xED4245)
@@ -151,7 +162,7 @@ function buildMainDashboard(member = null) {
         let description = `🟢 **Aktywne dźwięki (${activeCount}):**\n\n`;
         const trackStopButtons = [];
         let index = 1;
-        for (const [id, track] of activeTracks.entries()) {
+        for (const [id, track] of tracksMap.entries()) {
             description += `**${index}. ${track.file}** *(Kategoria: ${track.category})*\n└ Włączony przez: **${track.userTag}**\n\n`;
             if (isAdmin && trackStopButtons.length < 5) {
                 trackStopButtons.push(
@@ -167,23 +178,39 @@ function buildMainDashboard(member = null) {
         if (isAdmin && trackStopButtons.length > 0) {
             components.push(new ActionRowBuilder().addComponents(trackStopButtons));
         }
+        if (isAdmin) {
+            const systemRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('ctrl_stop_all')
+                    .setLabel('🛑 Stop wszystko')
+                    .setStyle(ButtonStyle.Danger)
+            );
+            components.push(systemRow);
+        }
     } else {
         embed.setDescription('🔴 **Status:** Idle');
     }
-    if (isAdmin) {
-        const systemRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('ctrl_stop_all')
-                .setLabel('🛑 Stop wszystko')
-                .setStyle(ButtonStyle.Danger)
-                .setDisabled(activeCount === 0),
-            new ButtonBuilder()
-                .setCustomId('sys_rebuild_all')
-                .setLabel('🔄 Odśwież bibliotekę')
-                .setStyle(ButtonStyle.Success)
-        );
-        components.push(systemRow);
-    }
+        if (isAdmin) {
+            const systemRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('sys_manage')
+                    .setLabel('Zarządzanie')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('sys_rebuild_all')
+                    .setLabel('🔄 Odśwież bibliotekę')
+                    .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                    .setCustomId('sys_settings')
+                    .setLabel('⚙️ Ustawienia')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('sys_addons')
+                    .setLabel('🧩 Dodatki')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+            components.push(systemRow);
+        }
     return { embeds: [embed], components };
 }
 
@@ -229,24 +256,23 @@ function buildCategoryMessage(categoryName) {
     return { embeds: [embed], components: rows };
 }
 
-async function updateMainPanel() {
-    if (mainPanelMessageRef) {
-        try {
-            await mainPanelMessageRef.edit(buildMainDashboard());
-        } catch (error) {
-            if (error.code === 10008) {
-                const channel = mainPanelMessageRef.channel;
-                mainPanelMessageRef = null;
-                if (channel) {
-                    try {
-                        mainPanelMessageRef = await channel.send(buildMainDashboard());
-                    } catch (e) {
-                        console.error('Nie udało się zaktualizować panelu!:', e);
-                    }
+async function updateMainPanel(member = null) {
+    if (!mainPanelMessageRef) return;
+    try {
+        await mainPanelMessageRef.edit(buildMainDashboard(member));
+    } catch (error) {
+        if (error.code === 10008) {
+            const channel = mainPanelMessageRef.channel;
+            mainPanelMessageRef = null;
+            if (channel) {
+                try {
+                    mainPanelMessageRef = await channel.send(buildMainDashboard(member));
+                } catch (e) {
+                    console.error('Nie udało się zaktualizować panelu!:', e);
                 }
-            } else {
-                console.error('Nie udało się zaktualizować gł. panelu!:', error);
             }
+        } else {
+            console.error('Nie udało się zaktualizować gł. panelu!:', error);
         }
     }
 }
@@ -254,47 +280,54 @@ async function updateMainPanel() {
 async function renderFullSoundboard(channel) {
     if (!fs.existsSync(SOUNDS_DIR)) fs.mkdirSync(SOUNDS_DIR, { recursive: true });
     if (channel?.guild) await syncLocalIconsToGuild(channel.guild);
+    if (mainPanelMessageRef) {
+        try {
+            await mainPanelMessageRef.delete();
+        } catch (err) {}
+        mainPanelMessageRef = null;
+    }
+    for (const [, msgRef] of categoryMessageRefs.entries()) {
+        try {
+            await msgRef.delete();
+        } catch (error) {}
+    }
+    categoryMessageRefs.clear();
     const currentCategories = fs.readdirSync(SOUNDS_DIR, { withFileTypes: true })
         .filter(d => d.isDirectory() && !hiddenCategories.has(d.name))
         .map(d => d.name);
-    for (const [catName, msgRef] of categoryMessageRefs.entries()) {
-        if (!currentCategories.includes(catName)) {
-            try {
-                await msgRef.delete();
-            } catch (error) { }
-            categoryMessageRefs.delete(catName);
-        }
-    }
     for (const cat of currentCategories) {
         const msgData = buildCategoryMessage(cat);
-        if (categoryMessageRefs.has(cat)) {
-            try {
-                const existingMsg = categoryMessageRefs.get(cat);
-                await existingMsg.edit(msgData);
-            } catch (error) {
-                const newMsg = await channel.send(msgData);
-                categoryMessageRefs.set(cat, newMsg);
-            }
-        } else {
-            const newMsg = await channel.send(msgData);
-            categoryMessageRefs.set(cat, newMsg);
-        }
+        const newMsg = await channel.send(msgData);
+        categoryMessageRefs.set(cat, newMsg);
     }
     const mainDash = buildMainDashboard();
-    if (mainPanelMessageRef) {
-        try {
-            await mainPanelMessageRef.edit(mainDash);
-        } catch (error) {
-            mainPanelMessageRef = await channel.send(mainDash);
+    mainPanelMessageRef = await channel.send(mainDash);
+    saveConfig();
+}
+
+async function restorePanelReferences(client) {
+    if (!fs.existsSync(CONFIG_PATH)) return;
+    try {
+        const data = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+        if (data.mainPanelRef) {
+            const channel = await client.channels.fetch(data.mainPanelRef.channelId).catch(() => null);
+            if (channel) {
+                mainPanelMessageRef = await channel.messages.fetch(data.mainPanelRef.messageId).catch(() => null);
+                if (mainPanelMessageRef) {
+                    console.log('[System] Pomyślnie przywrócono referencję Głównego Panelu po restarcie');
+                    await updateMainPanel();
+                }
+            }
         }
-    } else {
-        mainPanelMessageRef = await channel.send(mainDash);
+    } catch (err) {
+        console.error('[System] Błąd podczas przywracania panelu:', err);
     }
 }
 
 module.exports = {
     categoryNames,
     categoryColors,
+    normalizedFiles,
     categoryEmojis,
     buttonEmojis,
     hiddenCategories,
@@ -302,6 +335,7 @@ module.exports = {
     syncLocalIconsToGuild,
     buildMainDashboard,
     buildCategoryMessage,
+    restorePanelReferences,
     updateMainPanel,
     renderFullSoundboard
 };
