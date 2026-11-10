@@ -3,6 +3,7 @@ node_modules/
 .vscode-server/
 sounds/
 normalized/
+ico/
 # Log files
 *.log
 soundboard.log

@@ -1,3 +1,27 @@
 {
-  "autoDisconnectMinutes": 3
+  "allowedUsers": [
+    "347130291053264898"
+  ],
+  "playbackMode": "mix",
+  "autoDisconnectMinutes": 0,
+  "addons": {
+    "barka2137Enabled": true
+  },
+  "audioEffects": {
+    "bassboost": false,
+    "nightcore": false,
+    "vaporwave": false,
+    "earrape": false,
+    "slowed": false,
+    "reverb": false,
+    "8d": false,
+    "speedup": false,
+    "4thdensity": false,
+    "telephone": false,
+    "underwater": false,
+    "radio": false,
+    "demon": false,
+    "earrape2": false,
+    "instrumental": false
+  }
 }
